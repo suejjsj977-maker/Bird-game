@@ -1,20 +1,15 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Bird Game ULTRA PRO</title>
+<title>Bird Game ULTRA PRO MAX</title>
 
 <style>
-body {
-    margin:0;
-    overflow:hidden;
-    background:skyblue;
-    text-align:center;
-    font-family:Arial;
-}
+body { margin:0; overflow:hidden; background:skyblue; font-family:Arial; }
 
 canvas {
-    display:block;
-    margin:auto;
+    position:fixed;
+    top:0; left:0;
+    width:100vw; height:100vh;
     background:#70c5ce;
 }
 
@@ -24,12 +19,13 @@ canvas {
     width:100%; height:100%;
     background:rgba(0,0,0,0.8);
     color:white;
+    text-align:center;
 }
 
 button {
-    padding:10px 20px;
-    margin:10px;
-    font-size:16px;
+    padding:10px 15px;
+    margin:5px;
+    font-size:14px;
 }
 
 #topUI {
@@ -42,7 +38,6 @@ button {
 
 <body>
 
-<!-- MENU -->
 <div id="menu">
     <h1>🐦 Bird Game</h1>
     <h3 id="coinText"></h3>
@@ -51,297 +46,342 @@ button {
     <button onclick="openShop()">🛒 Shop</button>
 </div>
 
-<!-- SHOP -->
 <div id="shop" style="display:none;">
-    <h1>🛒 Shop</h1>
+    <h2>🛒 Shop (Powers)</h2>
     <div id="shopItems"></div>
     <button onclick="closeShop()">⬅ Back</button>
 </div>
 
 <div id="topUI">
-    <button onclick="goHome()">🏠 Home</button>
+    <button onclick="togglePause()">⏸</button>
+    <button onclick="toggleSound()">🔊</button>
+    <button onclick="boost()">⚡</button>
+    <button onclick="goHome()">🏠</button>
 </div>
 
-<canvas id="gameCanvas" width="400" height="600"></canvas>
-
+<canvas id="gameCanvas"></canvas>
 <button id="restartBtn" style="display:none;">Restart</button>
 
 <script>
+
 let canvas = document.getElementById("gameCanvas");
 let ctx = canvas.getContext("2d");
 
-let menu = document.getElementById("menu");
-let shopDiv = document.getElementById("shop");
-let levelButtonsDiv = document.getElementById("levelButtons");
-let restartBtn = document.getElementById("restartBtn");
-let coinText = document.getElementById("coinText");
-let highScoreText = document.getElementById("highScoreText");
+function resizeCanvas(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
-let bird, pipes, coinsArr;
-let frame, score;
-let gameRunning = false;
+// 🔊 SOUND
+let soundOn = true;
+let flapSound = new Audio("flap.mp3");
+let coinSound = new Audio("coin.mp3");
+let hitSound = new Audio("hit.mp3");
+let bgMusic = new Audio("bg.mp3");
+bgMusic.loop = true;
 
-let currentLevel = 1;
-let speed = 2;
-let gap = 150;
+function playSound(s){
+    if(soundOn){
+        s.currentTime = 0;
+        s.play();
+    }
+}
 
-let levelTarget = 10;
+function toggleSound(){
+    soundOn = !soundOn;
+    if(soundOn) bgMusic.play();
+    else bgMusic.pause();
+}
 
-let coins = parseInt(localStorage.getItem("coins")) || 0;
-let selectedSkin = localStorage.getItem("skin") || "yellow";
-let unlockedLevel = parseInt(localStorage.getItem("unlockedLevel")) || 1;
-let highScore = parseInt(localStorage.getItem("highScore")) || 0;
+// POWER SYSTEM
+let shield=false, fireMode=false, fireTimer=0, canDoubleJump=false, boostActive=false;
 
+let levelStars = JSON.parse(localStorage.getItem("levelStars")) || {};
+
+function saveStars(level, s){
+    if((levelStars[level]||0) < s){
+        levelStars[level]=s;
+        localStorage.setItem("levelStars", JSON.stringify(levelStars));
+    }
+}
+
+// SKINS
 let skins = [
-    {name:"yellow", price:0},
-    {name:"red", price:50},
-    {name:"green", price:100},
-    {name:"blue", price:150}
+{name:"yellow",price:0,power:"normal"},
+{name:"red",price:50,power:"fast"},
+{name:"green",price:100,power:"float"},
+{name:"blue",price:150,power:"small"},
+{name:"gold",price:300,power:"shield"},
+{name:"fire",price:500,power:"fire"},
+{name:"purple",price:700,power:"double"},
+{name:"black",price:1000,power:"boost"}
 ];
 
-// UI UPDATE
-function updateUI(){
-    coinText.innerText = "Coins: " + coins;
-    highScoreText.innerText = "High Score: " + highScore;
+let selectedSkin = localStorage.getItem("skin") || "yellow";
+let coins = parseInt(localStorage.getItem("coins"))||0;
+let unlockedLevel = parseInt(localStorage.getItem("unlockedLevel"))||1;
+let highScore = parseInt(localStorage.getItem("highScore"))||0;
+
+function applySkinPower(){
+    bird.gravity=0.6;
+    bird.width=30;
+    bird.height=30;
+    shield=false; canDoubleJump=false;
+
+    if(selectedSkin=="red") speed+=1;
+    if(selectedSkin=="green") bird.gravity=0.3;
+    if(selectedSkin=="blue"){ bird.width=20; bird.height=20; }
+    if(selectedSkin=="gold") shield=true;
+    if(selectedSkin=="fire"){ fireMode=true; fireTimer=180; }
+    if(selectedSkin=="purple") canDoubleJump=true;
+    if(selectedSkin=="black") boostActive=true;
 }
-updateUI();
+
+// UI
+function updateUI(){
+document.getElementById("coinText").innerText="Coins: "+coins;
+document.getElementById("highScoreText").innerText="High Score: "+highScore;
+}
 
 // LEVEL BUTTONS
 function createLevelButtons(){
-    levelButtonsDiv.innerHTML = "";
-
-    for(let i=1;i<=100;i++){
-        let btn = document.createElement("button");
-
-        if(i <= unlockedLevel){
-            btn.innerText = "Level " + i;
-            btn.onclick = () => startGame(i);
-        } else {
-            btn.innerText = "Level " + i + " 🔒";
-            btn.disabled = true;
-        }
-
-        levelButtonsDiv.appendChild(btn);
-    }
+let div=document.getElementById("levelButtons");
+div.innerHTML="";
+for(let i=1;i<=50;i++){
+let b=document.createElement("button");
+let stars="⭐".repeat(levelStars[i]||0);
+if(i<=unlockedLevel){
+b.innerText="L"+i+" "+stars;
+b.onclick=()=>startGame(i);
+}else{
+b.innerText="L"+i+" 🔒";
+b.disabled=true;
 }
-createLevelButtons();
+div.appendChild(b);
+}
+}
+updateUI(); createLevelButtons();
 
 // SHOP
 function openShop(){
-    menu.style.display="none";
-    shopDiv.style.display="block";
-    renderShop();
+menu.style.display="none";
+shop.style.display="block";
+renderShop();
 }
-
 function closeShop(){
-    shopDiv.style.display="none";
-    menu.style.display="block";
+shop.style.display="none";
+menu.style.display="block";
 }
-
 function renderShop(){
-    let shopItems = document.getElementById("shopItems");
-    shopItems.innerHTML="";
-
-    skins.forEach(s=>{
-        let btn = document.createElement("button");
-
-        if(selectedSkin==s.name){
-            btn.innerText = s.name + " ✅";
-        }
-        else if(coins >= s.price){
-            btn.innerText = s.name + " - " + s.price;
-            btn.onclick = ()=>{
-                coins -= s.price;
-                selectedSkin = s.name;
-                saveData();
-                renderShop();
-            }
-        }
-        else{
-            btn.innerText = s.name + " 🔒 ("+s.price+")";
-            btn.disabled = true;
-        }
-
-        shopItems.appendChild(btn);
-    });
+let div=document.getElementById("shopItems");
+div.innerHTML="";
+skins.forEach(s=>{
+let b=document.createElement("button");
+b.innerText=s.name+" ("+s.power+") "+s.price;
+b.onclick=()=>{
+if(coins>=s.price){
+coins-=s.price;
+selectedSkin=s.name;
+saveData();
+renderShop();
+}
+};
+div.appendChild(b);
+});
 }
 
 // SAVE
 function saveData(){
-    localStorage.setItem("coins", coins);
-    localStorage.setItem("skin", selectedSkin);
-    localStorage.setItem("unlockedLevel", unlockedLevel);
-    localStorage.setItem("highScore", highScore);
-    updateUI();
+localStorage.setItem("coins",coins);
+localStorage.setItem("skin",selectedSkin);
+localStorage.setItem("unlockedLevel",unlockedLevel);
+localStorage.setItem("highScore",highScore);
+updateUI(); createLevelButtons();
 }
 
-// START GAME
+// GAME
+let bird,pipes,coinsArr,frame,score,gameRunning=false;
+let speed=2,gap=150,currentLevel=1,stars=0,paused=false;
+
 function startGame(level){
+currentLevel=level;
+paused=false;
+speed=2+level*0.2;
+gap=150-level*0.5;
+if(gap<80) gap=80;
 
-    currentLevel = level;
+bird={x:80,y:200,width:30,height:30,gravity:0.6,lift:-10,velocity:0};
 
-    speed = 2 + level * 0.2;
-    gap = 150 - level * 0.5;
-    if(gap < 80) gap = 80;
+applySkinPower();
 
-    bird = {
-        x:80,y:200,width:30,height:30,
-        gravity:0.6,lift:-10,velocity:0
-    };
+pipes=[]; coinsArr=[]; frame=0; score=0; stars=0;
+gameRunning=true;
 
-    pipes=[];
-    coinsArr=[];
-    frame=0;
-    score=0;
-    gameRunning=true;
-
-    menu.style.display="none";
-    restartBtn.style.display="none";
-
-    draw();
+menu.style.display="none";
+if(soundOn) bgMusic.play();
+draw();
 }
 
 // CONTROLS
-document.addEventListener("keydown", flap);
-document.addEventListener("touchstart", flap);
+document.addEventListener("keydown",flap);
+document.addEventListener("touchstart",flap);
 
 function flap(){
-    if(!gameRunning) return;
-    bird.velocity = bird.lift;
+if(!gameRunning||paused)return;
+
+if(bird.velocity<0 && canDoubleJump){
+bird.velocity=bird.lift;
+canDoubleJump=false;
+}else{
+bird.velocity=bird.lift;
+}
+playSound(flapSound);
 }
 
 // LOOP
 function draw(){
-    if(!gameRunning) return;
+if(!gameRunning||paused)return;
 
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    bird.velocity+=bird.gravity;
-    bird.y+=bird.velocity;
+bird.velocity+=bird.gravity;
+bird.y+=bird.velocity;
 
-    ctx.fillStyle = selectedSkin;
-    ctx.fillRect(bird.x,bird.y,bird.width,bird.height);
+ctx.fillStyle=selectedSkin;
+ctx.fillRect(bird.x,bird.y,bird.width,bird.height);
 
-    if(frame%90===0){
-        let top=Math.random()*300;
-        pipes.push({
-            x:canvas.width,
-            top:top,
-            bottom:top+gap,
-            passed:false
-        });
-    }
+// pipes
+if(frame%90==0){
+let top=Math.random()*300;
+pipes.push({x:canvas.width,top:top,bottom:top+gap,passed:false});
+}
 
-    ctx.fillStyle="green";
+for(let p of pipes){
+ctx.fillStyle="green";
+ctx.fillRect(p.x,0,60,p.top);
+ctx.fillRect(p.x,p.bottom,60,canvas.height);
 
-    for(let p of pipes){
-        ctx.fillRect(p.x,0,60,p.top);
-        ctx.fillRect(p.x,p.bottom,60,canvas.height);
+p.x-=speed;
 
-        p.x-=speed;
+// collision
+if(bird.x<p.x+60 && bird.x+bird.width>p.x &&
+(bird.y<p.top||bird.y+bird.height>p.bottom)){
+if(fireMode){}
+else if(shield){ shield=false; p.x=-100; }
+else{ gameOver(); }
+}
 
-        if(
-            bird.x<p.x+60 &&
-            bird.x+bird.width>p.x &&
-            (bird.y<p.top || bird.y+bird.height>p.bottom)
-        ){
-            gameOver();
-        }
+if(!p.passed && p.x<bird.x){
+score++; coins++; p.passed=true;
+}
+}
 
-        if(!p.passed && p.x<bird.x){
-            score++;
-            coins++;
-            p.passed=true;
-        }
-    }
+// fire timer
+if(fireMode){
+fireTimer--;
+if(fireTimer<=0) fireMode=false;
+}
 
-    // COINS
-    if(frame%120===0){
-        coinsArr.push({
-            x:canvas.width,
-            y:Math.random()*canvas.height
-        });
-    }
+// coins
+if(frame%120==0){
+coinsArr.push({x:canvas.width,y:Math.random()*canvas.height});
+}
 
-    ctx.fillStyle="gold";
+for(let c of coinsArr){
+ctx.beginPath();
+ctx.arc(c.x,c.y,10,0,Math.PI*2);
+ctx.fillStyle="gold"; ctx.fill();
 
-    for(let c of coinsArr){
-        ctx.beginPath();
-        ctx.arc(c.x,c.y,10,0,Math.PI*2);
-        ctx.fill();
+c.x-=speed;
 
-        c.x-=speed;
+if(bird.x<c.x+10 && bird.x+bird.width>c.x &&
+bird.y<c.y+10 && bird.y+bird.height>c.y){
+coins+=5;
+playSound(coinSound);
+c.x=-100;
+}
+}
 
-        if(
-            bird.x<c.x+10 &&
-            bird.x+bird.width>c.x &&
-            bird.y<c.y+10 &&
-            bird.y+bird.height>c.y
-        ){
-            coins+=5;
-            c.x=-100;
-        }
-    }
+// level complete
+if(score>=15) levelComplete();
 
-    // LEVEL COMPLETE
-    if(score >= levelTarget){
-        levelComplete();
-    }
+if(bird.y<0||bird.y+bird.height>canvas.height) gameOver();
 
-    if(bird.y<0 || bird.y+bird.height>canvas.height){
-        gameOver();
-    }
+// UI
+ctx.fillStyle="black";
+ctx.fillText("Score:"+score,10,20);
+ctx.fillText("Stars:"+"⭐".repeat(stars),10,40);
 
-    ctx.fillStyle="black";
-    ctx.fillText("Score: "+score,10,20);
-    ctx.fillText("Level: "+currentLevel,10,40);
-    ctx.fillText("High: "+highScore,10,60);
+// visuals
+if(shield){
+ctx.strokeStyle="cyan";
+ctx.strokeRect(bird.x-5,bird.y-5,bird.width+10,bird.height+10);
+}
+if(fireMode){
+ctx.fillStyle="orange";
+ctx.fillRect(bird.x,bird.y,bird.width,bird.height);
+}
 
-    frame++;
-    requestAnimationFrame(draw);
+frame++;
+requestAnimationFrame(draw);
 }
 
 // LEVEL COMPLETE
 function levelComplete(){
-    gameRunning=false;
+gameRunning=false;
+bgMusic.pause();
 
-    if(currentLevel == unlockedLevel && unlockedLevel < 100){
-        unlockedLevel++;
-    }
+if(score>=15) stars=3;
+else if(score>=10) stars=2;
+else stars=1;
 
-    saveData();
+saveStars(currentLevel,stars);
 
-    setTimeout(()=>{
-        alert("Level " + currentLevel + " Complete!");
-        startGame(currentLevel + 1);
-    },300);
+if(currentLevel==unlockedLevel) unlockedLevel++;
+
+saveData();
+
+setTimeout(()=>{
+alert("Level "+currentLevel+" ⭐"+stars);
+startGame(currentLevel+1);
+},300);
 }
 
 // GAME OVER
 function gameOver(){
-    gameRunning=false;
+gameRunning=false;
+bgMusic.pause();
+playSound(hitSound);
 
-    if(score > highScore){
-        highScore = score;
-    }
+if(score>highScore) highScore=score;
+saveData();
 
-    saveData();
-
-    restartBtn.style.display="block";
-    menu.style.display="block";
+menu.style.display="block";
 }
 
-// RESTART
-restartBtn.onclick=()=>{
-    startGame(currentLevel);
+// BOOST
+function boost(){
+if(!boostActive) return;
+speed+=3;
+setTimeout(()=>{speed-=3;},2000);
+}
+
+// PAUSE
+function togglePause(){
+if(!gameRunning) return;
+paused=!paused;
+if(!paused) draw();
 }
 
 // HOME
 function goHome(){
-    gameRunning=false;
-    menu.style.display="block";
-    restartBtn.style.display="none";
+gameRunning=false;
+bgMusic.pause();
+menu.style.display="block";
 }
+
 </script>
 
 </body>
